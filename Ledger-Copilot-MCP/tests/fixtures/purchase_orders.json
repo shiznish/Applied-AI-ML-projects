@@ -1,0 +1,60 @@
+[
+  {
+    "po_id": "PO-1001",
+    "vendor_name": "Acme Office Supplies",
+    "status": "open",
+    "order_date": "2026-01-15",
+    "currency": "USD",
+    "cost_center": "CC-100",
+    "line_items": [
+      {
+        "line_number": 1,
+        "description": "Standing desks",
+        "quantity_ordered": 10,
+        "quantity_received": 10,
+        "unit_price": 450.0
+      },
+      {
+        "line_number": 2,
+        "description": "Ergonomic chairs",
+        "quantity_ordered": 10,
+        "quantity_received": 10,
+        "unit_price": 300.0
+      }
+    ]
+  },
+  {
+    "po_id": "PO-1002",
+    "vendor_name": "Northwind Traders",
+    "status": "open",
+    "order_date": "2026-02-01",
+    "currency": "USD",
+    "cost_center": "CC-200",
+    "line_items": [
+      {
+        "line_number": 1,
+        "description": "Server racks",
+        "quantity_ordered": 4,
+        "quantity_received": 2,
+        "unit_price": 1200.0
+      }
+    ]
+  },
+  {
+    "po_id": "PO-1003",
+    "vendor_name": "Globex Logistics",
+    "status": "open",
+    "order_date": "2026-03-10",
+    "currency": "USD",
+    "cost_center": "CC-100",
+    "line_items": [
+      {
+        "line_number": 1,
+        "description": "Freight pallets",
+        "quantity_ordered": 20,
+        "quantity_received": 0,
+        "unit_price": 85.5
+      }
+    ]
+  }
+]

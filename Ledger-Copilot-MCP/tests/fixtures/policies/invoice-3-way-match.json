@@ -1,0 +1,6 @@
+{
+  "doc_id": "invoice-3-way-match",
+  "title": "Invoice Three-Way Match Policy",
+  "version": "2026.1",
+  "body": "Payment approval requires a 3-way match between purchase order, receipt, and invoice. An unresolved match discrepancy blocks approval unless an explicit override scope is presented, and the override is logged."
+}

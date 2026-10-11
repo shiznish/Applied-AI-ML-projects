@@ -1,0 +1,14 @@
+[
+  {
+    "cost_center": "CC-100",
+    "period_start": "2026-01-01",
+    "period_end": "2026-03-31",
+    "budgeted_amount": 10000.0
+  },
+  {
+    "cost_center": "CC-200",
+    "period_start": "2026-01-01",
+    "period_end": "2026-03-31",
+    "budgeted_amount": 50000.0
+  }
+]

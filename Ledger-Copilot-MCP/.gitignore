@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.local
+.env.*.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.db
+*.sqlite3
+*.log
+.tox/
+.idea/
+.vscode/
+*.egg
+.DS_Store
+Thumbs.db
+.playwright-mcp/
+
+# Claude Code local-only state (machine-specific permissions/session data,
+# not shared project config like .claude/commands or .claude/skills)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

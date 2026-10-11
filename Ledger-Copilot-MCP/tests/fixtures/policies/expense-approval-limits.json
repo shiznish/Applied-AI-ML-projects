@@ -1,0 +1,6 @@
+{
+  "doc_id": "expense-approval-limits",
+  "title": "Expense Approval Limits Policy",
+  "version": "2026.1",
+  "body": "Approvers may authorize expenses up to their role's approval limit. An approver may never approve a transaction they created (segregation of duties). See domain/policy.py for the enforced limit table."
+}

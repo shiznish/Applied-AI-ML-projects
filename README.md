@@ -6,13 +6,13 @@ Welcome to my **Machine Learning Projects Repository**, a curated collection of 
 
 ## 📂 Project List
 
-### 🤖 GenAI, Agentic & MCP Applications
+### 🤖 Flagship: Enterprise GenAI & Agentic Systems
 
 **[Text-To-SQL](Text-To-SQL/)**
 A governed natural-language-to-SQL platform with a curated semantic layer, SQL guardrails, PostgreSQL row-level security, and a LangGraph agent for multi-turn conversation.
 
 **[Ledger-Copilot-MCP](Ledger-Copilot-MCP/)**
-A production-shaped Model Context Protocol (MCP) server exposing governed procurement/finance tools (PO status, vendor risk, expense creation, invoice anomaly detection, spend reporting) to an enterprise chatbot — with OAuth 2.1 JWT auth, per-tool scopes, append-only audit logging, rate limiting, and a dedicated threat-model test suite (confused deputy, token passthrough, prompt injection, SSRF, and more).
+A governed Model Context Protocol (MCP) server giving an enterprise chatbot secure, audited access to procurement and finance tools, with OAuth 2.1 auth and a dedicated threat-model test suite.
 
 **[AzureDevopsPrReview](AzureDevopsPrReview/)**
 An AI-powered PR reviewer for Azure DevOps. Automatically analyzes pull requests, summarizes code changes, and posts actionable review comments using LLMs. Integrates with Azure DevOps pipelines for seamless code review automation.
@@ -20,19 +20,23 @@ An AI-powered PR reviewer for Azure DevOps. Automatically analyzes pull requests
 **[Agentic-Chatbot-FastAPI](Agentic-Chatbot-FastAPI/)**
 A production-ready, agentic AI chatbot using FastAPI and LangGraph, supporting multiple LLM providers and a Streamlit frontend for interactive conversations.
 
+### 🔎 RAG & GenAI Explorations
+
 **[SmartDocs AI – Internal Knowledge Navigator](SmartDocs%20AI%20%E2%80%93%20Internal%20Knowledge%20Navigator/)**
 A local RAG-based internal knowledge navigator using ChromaDB vector storage and local Ollama LLMs (DeepSeek-R1, Qwen) to answer questions over internal PDF documents.
-
-**[Local AI Agent(RAG)](Local%20AI%20Agent%28RAG%29/)**
-A retrieval-augmented generation (RAG) agent that answers domain-specific questions (e.g., about a pizza restaurant) using local vector stores and LLMs.
 
 **[Crawl4AISample](Crawl4AISample/)**
 Scrapes any URL to build a ChromaDB-backed knowledge base, then answers questions over it via RAG with Groq LLMs, orchestrated with Pydantic AI and a Streamlit chat UI.
 
+**[Local AI Agent(RAG)](Local%20AI%20Agent%28RAG%29/)**
+A retrieval-augmented generation (RAG) agent that answers domain-specific questions (e.g., about a pizza restaurant) using local vector stores and LLMs.
+
 **[Gen AI_Cold Email](Gen%20AI_Cold%20Email/)**
 A generative AI project for automating cold email creation, featuring vector search and prompt engineering.
 
-### 📊 Classical Machine Learning
+### 📚 Earlier ML & Data Science Projects
+
+*Foundational projects from earlier in my ML/DL learning journey, kept for breadth and historical continuity.*
 
 **[End_To_End_ML_Project](End_To_End_ML_Project/)**
 A complete ML pipeline for wine quality prediction, including data ingestion, validation, transformation, model training, evaluation, and a Flask web app for predictions.
@@ -43,15 +47,11 @@ A machine learning solution for predicting customer churn, including feature eng
 **[Brazil's-Covid-19-ICU-Prediction](Brazil's-Covid-19-ICU-Prediction/)**
 A machine learning project to predict ICU admission needs for COVID-19 patients in Brazil using clinical and demographic data.
 
-### 📈 Time Series & Forecasting
-
 **[COVID-19-Forecasting](COVID-19-Forecasting/)**
 A project for forecasting COVID-19 trends using various time series and ML techniques.
 
 **[Time Series Forecasting for Air Passenger Data](Time%20Series%20Forecasting%20for%20Air%20Passenger%20Data/)**
 A collection of time series analysis and forecasting projects, demonstrating classical and modern approaches.
-
-### 🧠 NLP & Security
 
 **[Explainable Intrusion Detection](Explainable%20Intrusion%20Detection/)**
 An explainable AI project for network intrusion detection, combining ML models with interpretability techniques.

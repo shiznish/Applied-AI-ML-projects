@@ -1,0 +1,32 @@
+services:
+  ledger-copilot:
+    build: .
+    image: ledger-copilot:local
+    ports:
+      - "8000:8000"
+    environment:
+      LEDGER_COPILOT_ENVIRONMENT: development
+      LEDGER_COPILOT_LOG_LEVEL: INFO
+      LEDGER_COPILOT_HOST: 0.0.0.0
+      LEDGER_COPILOT_PORT: "8000"
+      LEDGER_COPILOT_AUDIT_DATABASE_PATH: /data/audit.db
+      LEDGER_COPILOT_VENDOR_RISK_API_BASE_URL: https://api.opensanctions.org
+      LEDGER_COPILOT_VENDOR_RISK_TIMEOUT_SECONDS: "5.0"
+      LEDGER_COPILOT_VENDOR_RISK_MAX_RETRIES: "3"
+      LEDGER_COPILOT_VENDOR_RISK_CIRCUIT_FAILURE_THRESHOLD: "5"
+      LEDGER_COPILOT_VENDOR_RISK_CIRCUIT_COOLDOWN_SECONDS: "30.0"
+      LEDGER_COPILOT_AUTH_ALGORITHM: RS256
+      LEDGER_COPILOT_RATE_LIMIT_CAPACITY: "20.0"
+      LEDGER_COPILOT_RATE_LIMIT_REFILL_PER_SECOND: "10.0"
+    volumes:
+      - audit-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  audit-data:

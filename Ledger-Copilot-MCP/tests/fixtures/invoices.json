@@ -1,0 +1,35 @@
+[
+  {
+    "invoice_id": "INV-2001",
+    "po_id": "PO-1001",
+    "vendor_name": "Acme Office Supplies",
+    "created_by": "alice",
+    "amount": 4500.0,
+    "currency": "USD",
+    "match_discrepancy": false,
+    "invoice_date": "2026-01-20",
+    "cost_center": "CC-100"
+  },
+  {
+    "invoice_id": "INV-2002",
+    "po_id": "PO-1002",
+    "vendor_name": "Northwind Traders",
+    "created_by": "bob",
+    "amount": 60000.0,
+    "currency": "USD",
+    "match_discrepancy": false,
+    "invoice_date": "2026-02-05",
+    "cost_center": "CC-200"
+  },
+  {
+    "invoice_id": "INV-2003",
+    "po_id": "PO-1003",
+    "vendor_name": "Globex Logistics",
+    "created_by": "carol",
+    "amount": 900.0,
+    "currency": "USD",
+    "match_discrepancy": true,
+    "invoice_date": "2026-03-12",
+    "cost_center": "CC-100"
+  }
+]

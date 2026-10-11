@@ -1,0 +1,6 @@
+{
+  "doc_id": "vendor-risk-thresholds",
+  "title": "Vendor Risk Scoring Thresholds Policy",
+  "version": "2026.1",
+  "body": "Vendors with a sanctions/PEP match score above the high-risk threshold require manual procurement review before a purchase order is issued. Risk scores are sourced from the external vendor-risk API, not derived internally."
+}

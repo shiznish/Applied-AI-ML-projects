@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-copilot
+  labels:
+    app: ledger-copilot
+spec:
+  # replicas: 1 because the audit store is SQLite-on-a-PVC (see
+  # audit/store.py) — a single writer only. The HPA below can still scale
+  # this up once LEDGER_COPILOT_AUDIT_DATABASE_PATH points at the
+  # documented Postgres production swap-in instead of a local file.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger-copilot
+  template:
+    metadata:
+      labels:
+        app: ledger-copilot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ledger-copilot
+          image: ledger-copilot:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: ledger-copilot-config
+            - secretRef:
+                name: ledger-copilot-secrets
+          volumeMounts:
+            - name: audit-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: audit-data
+          persistentVolumeClaim:
+            claimName: ledger-copilot-audit-data
