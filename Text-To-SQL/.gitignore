@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+logs/
+data/warehouse.duckdb
+.pytest_cache/
+eval/results/
+
+.coverage
+.pytest_cache/
+.playwright-mcp/
+.claude/
+.vscode/
+CLAUDE.md

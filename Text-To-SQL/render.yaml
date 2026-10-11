@@ -1,0 +1,52 @@
+# Render.com deployment. Updated for the PostgreSQL rebuild: a managed Postgres
+# instance replaces the embedded DuckDB file, so the warehouse is seeded via a
+# one-off job against it instead of being baked into the build.
+databases:
+  - name: text2sql-db
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: text2sql
+    runtime: python
+    plan: free
+    buildCommand: "pip install ."
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: text2sql-db
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false          # set in the Render dashboard, never in git
+      - key: TEXT2SQL_JWT_SECRET
+        sync: false          # set in the Render dashboard, never in git — without this, JWTs are signed with a public dev secret
+      - key: TEXT2SQL_MODEL
+        value: llama-3.1-8b-instant
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+  - type: worker
+    name: text2sql-seed
+    runtime: python
+    plan: free
+    buildCommand: "pip install ."
+    startCommand: "python data/seed.py && sleep infinity"
+    # Run this once manually from the Render dashboard after first deploy
+    # (or trigger via the API) — it's a worker, not a cron job, precisely so it
+    # doesn't silently re-seed (and wipe) the warehouse on a schedule.
+    #
+    # NOTE: this only seeds the business schema. app/auth/schema.sql and
+    # app/db/policies.sql (identity/RBAC tables + RLS policies) still need to
+    # be applied separately against this same database, in that order, AFTER
+    # this seed step (seed.py's schema setup would wipe them out if applied
+    # before) — e.g. via `psql "$DATABASE_ADMIN_URL" -f app/auth/schema.sql`
+    # then `-f app/db/policies.sql` from a shell with access to this DSN. Not
+    # scripted here since Render's Python runtime image isn't guaranteed to
+    # have the psql client available.
+    envVars:
+      - key: DATABASE_ADMIN_URL
+        fromDatabase:
+          name: text2sql-db
+          property: connectionString

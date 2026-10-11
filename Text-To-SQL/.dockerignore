@@ -1,0 +1,35 @@
+# Keeps the build context (everything `docker build` can see and `COPY . .`
+# could otherwise pull in) down to what the image actually needs. The most
+# important line here isn't about size — it's `.env`: with no .dockerignore,
+# a real local .env (API keys, JWT secret) sitting next to the Dockerfile
+# would get copied straight into an image layer and ship with it.
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.claude
+.vscode
+.playwright-mcp
+
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+
+logs/
+eval/results/
+data/warehouse.duckdb
+
+# Dev/CI-only — not needed to run the service or seed the warehouse.
+tests/
+eval/
+docs/
+*.md
+CLAUDE.md
+
+Dockerfile
+docker-compose.yml
+render.yaml

@@ -1,0 +1,318 @@
+# Curated semantic layer for the e-commerce warehouse (13 tables — see
+# data/seed.py). The LLM is prompted from THIS file, via app/semantic/resolver.py
+# and app/text2sql/schema_linker.py, instead of the raw introspected schema.
+#
+# Why: dbt's own benchmark found execution accuracy of ~83% against a curated
+# semantic layer vs ~40% against raw schema — a metric/dimension/join-path
+# vocabulary the model can't misinterpret beats hoping it infers the right
+# join and the right definition of "revenue" from column names alone.
+#
+# This file is business metadata, consumed by the semantic router
+# (app/semantic/router.py) to understand a question and by the deterministic
+# resolver (app/semantic/resolver.py) to map that understanding to physical
+# tables/columns. It is deliberately NOT a keyword-to-table lookup table — see
+# each section's own comment for why.
+
+tables:
+  customers:
+    description: One row per registered customer.
+  suppliers:
+    description: Vendors that supply products.
+  warehouses:
+    description: Fulfillment centers that ship orders.
+  employees:
+    description: Sales reps and account managers.
+  products:
+    description: The product catalog.
+  orders:
+    description: Customer purchase orders. One row per order (not per line item).
+  order_items:
+    description: Line items within an order — one row per (order, product) pair.
+  payments:
+    description: Payment attempts against an order.
+  shipments:
+    description: Fulfillment/shipping records for an order.
+  returns:
+    description: Product returns, linked to the specific line item returned.
+  product_reviews:
+    description: Customer star ratings and reviews of products.
+  marketing_campaigns:
+    description: Marketing campaigns run across channels.
+  campaign_attribution:
+    description: Which campaign (if any) an order is attributed to.
+
+# Directed edges: from a foreign key to the table/column it references.
+# schema_linker.py walks this graph (undirected for path-finding) to resolve
+# a join path between any two tables that appear in a question together.
+# SemanticLayer.connect_tables() (app/semantic/resolver.py) also uses this
+# graph to pull in bridge tables the resolver's own metric/dimension
+# resolution didn't directly select but that a valid join path needs.
+relationships:
+  - from: products.supplier_id
+    to: suppliers.supplier_id
+  - from: orders.customer_id
+    to: customers.customer_id
+  - from: orders.sales_rep_id
+    to: employees.employee_id
+  - from: order_items.order_id
+    to: orders.order_id
+  - from: order_items.product_id
+    to: products.product_id
+  - from: payments.order_id
+    to: orders.order_id
+  - from: shipments.order_id
+    to: orders.order_id
+  - from: shipments.warehouse_id
+    to: warehouses.warehouse_id
+  - from: returns.order_item_id
+    to: order_items.order_item_id
+  - from: product_reviews.product_id
+    to: products.product_id
+  - from: product_reviews.customer_id
+    to: customers.customer_id
+  - from: campaign_attribution.order_id
+    to: orders.order_id
+  - from: campaign_attribution.campaign_id
+    to: marketing_campaigns.campaign_id
+
+# A metric is a named, pre-agreed calculation — the model is told the formula,
+# not left to reconstruct it (or silently pick gross vs net) from column names.
+#
+# base_tables is a LIST (not a single table) because a metric's expression can
+# legitimately span more than one physical table — e.g. revenue is computed
+# from order_items alone, but a metric could just as well need a join. The
+# resolver unions every resolved metric/dimension's base_tables rather than
+# assuming one metric means one table.
+#
+# synonyms are curated, multi-word business phrases fed to the semantic
+# router as understanding aids — never a runtime keyword-to-table lookup, and
+# deliberately NOT bare generic single words (see the "spend" incident this
+# layer used to get wrong below): a word like "spend" or "sales" alone can
+# plausibly belong to more than one metric, so synonyms here favor specific
+# multi-word phrasing and the router leans primarily on names/descriptions/
+# domain context instead.
+metrics:
+  revenue:
+    description: Gross revenue per order line, net of the line's own discount.
+    expression: "order_items.quantity * order_items.unit_price * (1 - order_items.discount)"
+    base_tables: [order_items]
+    synonyms:
+      - customer spend
+      - customer spending
+      - money customers bring in
+  refund_amount:
+    description: Amount refunded for a return.
+    expression: "returns.refund_amount"
+    base_tables: [returns]
+    synonyms:
+      - money refunded
+      - refund total
+  campaign_spend:
+    description: Budget allocated to a marketing campaign.
+    expression: "marketing_campaigns.budget"
+    base_tables: [marketing_campaigns]
+    synonyms:
+      - marketing budget
+      - campaign budget
+      - advertising spend
+  average_rating:
+    description: Mean star rating (1-5) for a product.
+    expression: "AVG(product_reviews.rating)"
+    base_tables: [product_reviews]
+    synonyms:
+      - customer rating
+      - product rating
+  order_count:
+    description: Number of distinct orders.
+    expression: "COUNT(DISTINCT orders.order_id)"
+    base_tables: [orders]
+    synonyms:
+      - number of orders
+      - order volume
+  cancellation_rate:
+    description: >-
+      Share of orders with status 'cancelled', as a fraction (0-1) of all
+      orders in the group. A governed ratio metric, not something the model
+      should re-derive per question — see this file's header on why a named
+      business calculation is curated once here rather than left to vary
+      across generations.
+    expression: "COUNT(*) FILTER (WHERE orders.status = 'cancelled')::numeric / NULLIF(COUNT(*), 0)"
+    base_tables: [orders]
+    synonyms:
+      - cancel rate
+      - cancellation percentage
+      - percent cancelled
+      - share of orders cancelled
+  average_order_value:
+    description: >-
+      Mean amount spent per distinct order (total revenue divided by the
+      number of orders) — a governed ratio metric, same reasoning as
+      cancellation_rate: without a named definition here, "order value" has
+      no stable concept for a follow-up like "lower order value instead" to
+      refer back to, and gets re-interpreted from scratch each time instead
+      of recognized as the same metric with the sort direction flipped.
+    expression: >-
+      SUM(order_items.quantity * order_items.unit_price * (1 -
+      order_items.discount)) / NULLIF(COUNT(DISTINCT orders.order_id), 0)
+    base_tables: [order_items, orders]
+    synonyms:
+      - AOV
+      - average order size
+      - mean order value
+      - order value
+
+# A dimension is a named, pre-agreed way to slice/filter — again so the model
+# uses the agreed column instead of guessing between look-alikes (e.g.
+# orders.region vs customers.country, which are related but not the same).
+#
+# column stays a single "table.column" string rather than separate
+# base_table/column fields — deliberately loose: a future dimension could
+# become expression-backed (e.g. "DATE_TRUNC('month', orders.order_date)")
+# without needing the schema reshaped. See Dimension.table in resolver.py.
+#
+# value_aliases is optional, curated NL-value -> stored-value metadata for
+# controlled categorical dimensions (app/semantic/value_resolver.py). Only
+# added where the stored values are prone to a user typing something else
+# (abbreviations, alternate names) — not exhaustive, and never used for
+# high-cardinality dimensions like names/SKUs (those get a bounded DB lookup
+# instead, see value_resolver.py).
+dimensions:
+  customer:
+    description: The individual customer, by name — use for listing or grouping results per customer (not just by country/segment).
+    column: customers.name
+    synonyms:
+      - customer name
+  product:
+    description: The individual product, by name — use for listing or grouping results per product (not just by category).
+    column: products.name
+    synonyms:
+      - product name
+  customer_country:
+    description: The customer's registered country.
+    column: customers.country
+    synonyms:
+      - customer location
+    value_aliases:
+      USA: United States
+      US: United States
+      America: United States
+      UK: United Kingdom
+      UAE: United Arab Emirates
+  customer_segment:
+    description: Customer segment (consumer, small_business, enterprise).
+    column: customers.segment
+  product_category:
+    description: Commercial category assigned to a product.
+    column: products.category
+  order_status:
+    description: Current status of an order (completed, shipped, cancelled, etc.).
+    column: orders.status
+  order_channel:
+    description: Sales channel the order was placed through (web, mobile_app, marketplace).
+    column: orders.channel
+  order_region:
+    description: RLS-scoped sales region an order belongs to (us, india, row).
+    column: orders.region
+  campaign_channel:
+    description: Marketing channel a campaign ran on.
+    column: marketing_campaigns.channel
+  return_reason:
+    description: Reason a returned line item was returned.
+    column: returns.reason
+  order:
+    description: The individual order, by id — use when a question is about orders themselves (counting, listing, filtering) without a specific revenue/count metric in play.
+    column: orders.order_id
+  order_date:
+    description: >-
+      The calendar date an order was placed. Resolve this dimension whenever
+      a question carries a date/time condition (a year, quarter, month,
+      "last 30 days", etc.) so the orders table — and its order_date column
+      — is actually in scope for SQL generation. The specific comparison or
+      truncation (which year, which month, a rolling window) is still read
+      straight off the question's own wording during generation, not stored
+      here as a value: dates are open-ended, not a fixed category list like
+      order_status.
+    column: orders.order_date
+  supplier:
+    description: The individual supplier, by name.
+    column: suppliers.name
+  warehouse:
+    description: The individual warehouse, by name.
+    column: warehouses.name
+  employee:
+    description: The individual employee, by name.
+    column: employees.name
+  employee_role:
+    description: An employee's role (e.g. sales_rep, account_manager).
+    column: employees.role
+  payment:
+    description: The individual payment attempt, by id.
+    column: payments.payment_id
+  payment_method:
+    description: How a payment was made (e.g. credit_card, upi).
+    column: payments.method
+  payment_status:
+    description: Status of a payment attempt (e.g. captured, failed).
+    column: payments.status
+  shipment:
+    description: The individual shipment, by id.
+    column: shipments.shipment_id
+  shipment_status:
+    description: Status of a shipment (e.g. delivered, in_transit).
+    column: shipments.status
+  return:
+    description: The individual return record, by id — use for counting/listing returns themselves, as distinct from return_reason.
+    column: returns.return_id
+  review:
+    description: The individual product review, by id — use for counting/listing reviews themselves, as distinct from average_rating.
+    column: product_reviews.review_id
+  review_rating:
+    description: The exact star rating (1-5) a single review gave, for filtering on a specific rating value (distinct from average_rating, which is an aggregate).
+    column: product_reviews.rating
+  campaign:
+    description: The individual marketing campaign, by id — use for counting/listing campaigns themselves, as distinct from campaign_channel.
+    column: marketing_campaigns.campaign_id
+
+# Which dimension holds the primary date/time axis — looked up by
+# app/agent/graph.py's build_routed_intent_from_state so that a resolved
+# `time_range` (free-text, e.g. "in 2025" — see app/agent/merge.py) forces
+# that dimension's table into scope for schema linking, instead of silently
+# vanishing once merge_intent has captured it. Deliberately a lookup, not a
+# hardcoded table name in code, so the designated time axis stays a catalog
+# fact like everything else here.
+time_dimension: order_date
+
+# Domains group metrics/dimensions into business-familiar categories. This is
+# router context and a candidate-catalog constraint ONLY — it narrows what
+# the semantic router is shown and gives a fallback scope for clarification
+# options. It is explicitly NOT a table-selection mechanism: the physical
+# tables a question resolves to come from the specific metrics/dimensions the
+# router identifies (via their own base_tables/column), never from "every
+# table any domain happens to touch." E.g. "List UAE customers" should
+# resolve to {customers} alone even though customer_analytics also lists
+# order-related metrics.
+domains:
+  sales_performance:
+    description: Order and product-line revenue, order volume.
+    metrics: [revenue, order_count]
+    dimensions: [order, product, product_category, order_status, order_channel, order_region, order_date]
+  customer_analytics:
+    description: Customer purchasing behavior, geography, and segmentation.
+    metrics: [revenue, order_count]
+    dimensions: [customer, customer_country, customer_segment, order_date]
+  marketing_analytics:
+    description: Campaign budget and order attribution.
+    metrics: [campaign_spend]
+    dimensions: [campaign, campaign_channel]
+  returns_analytics:
+    description: Product returns and refunds.
+    metrics: [refund_amount]
+    dimensions: [return, return_reason]
+  product_analytics:
+    description: Product catalog performance and customer reviews.
+    metrics: [average_rating]
+    dimensions: [product, product_category, review, review_rating]
+  operations_analytics:
+    description: Suppliers, warehouses, staff, payments, and shipments — the operational side of fulfillment, not revenue.
+    metrics: []
+    dimensions: [supplier, warehouse, employee, employee_role, payment, payment_method, payment_status, shipment, shipment_status]

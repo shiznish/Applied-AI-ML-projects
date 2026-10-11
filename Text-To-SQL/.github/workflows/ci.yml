@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: text2sql
+          POSTGRES_PASSWORD: text2sql
+          POSTGRES_DB: text2sql
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U text2sql"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://text2sql:text2sql@localhost:5432/text2sql
+      DATABASE_ADMIN_URL: postgresql://text2sql:text2sql@localhost:5432/text2sql
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+
+      - name: Install package (with dev extras)
+        run: pip install ".[dev]"
+
+      - name: Seed sample warehouse
+        # Must run BEFORE the auth/RLS setup below: this re-creates the public
+        # schema from scratch (DROP SCHEMA ... CASCADE), which would wipe out
+        # the auth tables and RLS policies if applied first.
+        run: python data/seed.py
+
+      - name: Apply auth/RBAC schema, RLS policies, and agent session storage
+        run: |
+          psql "$DATABASE_ADMIN_URL" -f app/auth/schema.sql
+          psql "$DATABASE_ADMIN_URL" -f app/db/policies.sql
+          # The app connects as a single DB user and SET LOCAL ROLEs into one
+          # of the per-business-role roles per request (see app/db/policies.sql);
+          # grant that switch here the same way a real deployment would.
+          psql "$DATABASE_ADMIN_URL" -c "GRANT app_role_sales_us, app_role_sales_india, app_role_admin TO text2sql;"
+          psql "$DATABASE_ADMIN_URL" -f app/db/agent_schema.sql
+
+      - name: Run unit + live-Postgres tests
+        run: python -m pytest tests/ -q
+
+      - name: Run offline guardrail/adversarial eval
+        run: python eval/run_eval.py --offline

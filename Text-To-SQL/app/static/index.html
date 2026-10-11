@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text2SQL — NL query interface with guardrails</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2d3646;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --amber: #d29922; --red: #f85149; --user-accent: #a371f7;
+    --mono: "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Without this, an element's own `display` rule (e.g. .login-wrap's
+     display:flex) beats the browser's built-in `[hidden]{display:none}`
+     at equal specificity, since author styles win ties over the UA sheet —
+     so toggling the hidden attribute alone would silently do nothing. */
+  [hidden] { display: none !important; }
+  body { background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; }
+  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; max-width: 1400px; margin: 0 auto; padding: 24px; }
+  /* Grid/flex items default to min-width:auto, which sizes them to fit
+     their biggest unbroken child (a long generated-SQL <pre> line, mainly)
+     instead of shrinking to the track width — that's what was pushing the
+     whole page wider than the viewport. min-width:0 lets them shrink; the
+     overflow-x:auto on pre/.table-scroll below then does its job of
+     scrolling just that element instead of the whole page. */
+  main, aside, .card { min-width: 0; }
+  /* The sidebar reads as its own distinct zone (not just cards floating
+     next to the chat) by giving it one shared background/border rather
+     than relying on gap spacing alone to separate it from main. */
+  aside { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; align-self: start; }
+  aside .card, aside details.card { background: var(--panel2); }
+  header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+  header h1 { font-size: 22px; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .composer { position: sticky; bottom: 12px; z-index: 20; box-shadow: 0 10px 24px 6px rgba(0,0,0,0.55); }
+  #question:disabled { opacity: .6; cursor: not-allowed; }
+  .ask-row { display: flex; gap: 10px; }
+  #question { flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 15px; }
+  #question:focus { outline: 1px solid var(--accent); }
+  button { background: var(--accent); color: #0d1117; font-weight: 600; border: 0; border-radius: 8px; padding: 0 22px; font-size: 14px; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); padding: 6px 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .chip:hover { color: var(--accent); border-color: var(--accent); }
+  label.toggle { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
+  textarea#sqlbox { width: 100%; min-height: 90px; background: var(--panel2); color: #a5d6ff; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 13px; resize: vertical; }
+  .badge { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+  .badge.ok { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.warn { background: rgba(210,153,34,.15); color: var(--amber); }
+  .badge.bad { background: rgba(248,81,73,.15); color: var(--red); }
+  .conf-wrap { display: flex; align-items: center; gap: 14px; margin: 10px 0; }
+  .conf-num { font-size: 34px; font-weight: 700; }
+  .conf-bars { flex: 1; }
+  .conf-bar { display: grid; grid-template-columns: 130px 1fr 44px; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); margin: 3px 0; }
+  .conf-bar .track { background: var(--panel2); border-radius: 4px; height: 8px; overflow: hidden; }
+  .conf-bar .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--accent); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+  .table-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .warn-list li { color: var(--amber); font-size: 13px; margin: 4px 0 4px 18px; }
+  .viol-list li { color: var(--red); font-size: 13px; margin: 4px 0 4px 18px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .hist-item { border-bottom: 1px solid var(--border); padding: 10px 4px; cursor: pointer; }
+  .hist-item:hover { background: var(--panel2); }
+  .hist-q { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .fb { display: flex; gap: 8px; margin-top: 12px; }
+  .status-line { color: var(--muted); font-size: 13px; margin: 6px 0 16px; }
+  .ctx-diff { padding: 10px 14px; }
+  .ctx-diff-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; margin: 4px 0; }
+  .ctx-chip { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; border: 1px solid var(--border); }
+  .ctx-chip-inherited { color: var(--muted); background: var(--panel2); }
+  .ctx-chip-changed { color: var(--accent); background: rgba(88, 166, 255, 0.12); border-color: var(--accent); }
+  .ctx-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .ctx-row:last-child { border-bottom: none; }
+  .status-line code { display: inline-block; background: var(--panel2); color: #a5d6ff;
+    padding: 2px 6px; border-radius: 4px; font-size: 12px; white-space: pre-wrap;
+    word-break: break-word; max-width: 100%; vertical-align: top; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 8px 0; }
+  /* Each turn's whole result block (trace/confidence/SQL/results/feedback)
+     collapses under one summary line, so a long-running conversation stays
+     scannable — older turns fold up automatically as new ones land (see
+     render()), this one's own styling just makes the summary read as a
+     section header rather than the smaller nested detail links above. */
+  .turn-results { margin-bottom: 18px; border: 1px solid var(--border); border-radius: 10px;
+    background: rgba(88, 166, 255, 0.05); }
+  .turn-results > summary { cursor: pointer; list-style: none; background: var(--panel2);
+    border-radius: 10px; padding: 12px 16px;
+    font-size: 14px; font-weight: 600; color: var(--text); }
+  .turn-results > summary::-webkit-details-marker { display: none; }
+  .turn-results > summary::before { content: '▸'; display: inline-block; width: 14px;
+    color: var(--accent); transition: transform .15s ease; }
+  .turn-results[open] > summary::before { transform: rotate(90deg); }
+  .turn-results[open] > summary { border-radius: 10px 10px 0 0; border-bottom: 1px solid var(--border); }
+  /* Everything after the summary sits "inside" the group — indented off
+     the group's own border and given breathing room from each other and
+     from the bottom edge, so the whole thing reads as one container
+     instead of a header floating above loose, unrelated cards. */
+  .turn-results > *:not(summary) { margin: 14px 14px 0 14px; }
+  .turn-results > *:last-child { margin-bottom: 14px; }
+  pre { background: var(--panel2); border-radius: 8px; padding: 12px; font-size: 12px; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-word; color: var(--muted); font-family: var(--mono); }
+  .interp { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; cursor: pointer; }
+  .interp:hover { border-color: var(--accent); }
+  .interp code { font-family: var(--mono); font-size: 12px; color: #a5d6ff; word-break: break-word; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .login-card { width: 100%; max-width: 340px; }
+  .login-card h1 { font-size: 22px; margin-bottom: 4px; }
+  .login-card h1 span { color: var(--accent); }
+  .login-card .sub { margin-bottom: 18px; }
+  .login-card label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 6px; }
+  .login-card input { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .login-card input:focus { outline: 1px solid var(--accent); }
+  .login-card button { width: 100%; margin-top: 18px; padding: 10px 0; }
+  .login-error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
+  .demo-users { margin-top: 16px; font-size: 12px; color: var(--muted); }
+  .demo-users code { font-family: var(--mono); color: #a5d6ff; }
+  .user-badge { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; color: var(--muted); }
+  .user-badge button { padding: 4px 12px; font-size: 12px; }
+  .turn { margin-bottom: 18px; }
+  /* A question reads as something the user sent (left-aligned) and every
+     system response — a plain reply or a full result card — reads as
+     something that came back (right-aligned, labeled), so a long thread
+     scans as an actual back-and-forth instead of a stacked log of
+     unlabeled blocks. */
+  .user-msg { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; margin: 0 auto 10px 0; font-size: 14px; max-width: 80%; }
+  .user-msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase;
+    letter-spacing: .5px; }
+  .assistant-msg { background: rgba(88, 166, 255, 0.07); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 10px 14px; margin: 0 0 18px auto; font-size: 14px; max-width: 80%; }
+  .assistant-msg .who { font-size: 11px; color: var(--accent); margin-bottom: 3px; text-transform: uppercase;
+    letter-spacing: .5px; justify-content: flex-end; }
+  .turn-who { font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .5px;
+    border: 1px solid var(--accent); border-radius: 999px; padding: 2px 8px; margin-right: 10px;
+    display: inline-flex; align-items: center; gap: 5px; }
+  /* Small square avatar, same idea on every message regardless of which
+     template built it (chat bubble vs. a full result card's summary) — one
+     shared visual cue for "who said this" instead of text labels alone. */
+  .avatar { display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px; font-size: 12px; flex-shrink: 0; }
+  .avatar-user { background: var(--user-accent); }
+  .avatar-assistant { background: var(--accent); }
+  .who { display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<div id="loginScreen" class="login-wrap" hidden>
+  <div class="card login-card">
+    <h1>Text<span>2</span>SQL</h1>
+    <div class="sub muted">Sign in to run natural-language queries against the warehouse.</div>
+    <form id="loginForm">
+      <label for="loginUser">Username</label>
+      <input id="loginUser" autocomplete="username" required>
+      <label for="loginPass">Password</label>
+      <input id="loginPass" type="password" autocomplete="current-password" required>
+      <button type="submit">Log in</button>
+      <div class="login-error" id="loginError"></div>
+    </form>
+    <div class="demo-users">Demo users: <code>alice</code>, <code>raj</code>, <code>admin</code> — password <code>password123</code></div>
+  </div>
+</div>
+
+<div id="app" hidden>
+<div class="layout">
+  <header>
+    <h1>Text<span>2</span>SQL</h1>
+    <div class="sub">natural language &rarr; guarded SQL &rarr; validated answers &middot; e-commerce warehouse (PostgreSQL)</div>
+    <div class="user-badge">
+      <span id="userBadge"></span>
+      <button class="ghost" onclick="logout()">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="output"></div>
+
+    <div class="card composer">
+      <div class="ask-row">
+        <input id="question" placeholder="Ask anything about customers, products, orders, payments…"
+               onkeydown="if(event.key==='Enter')ask()">
+        <button id="askBtn" onclick="ask()">Ask</button>
+        <button class="ghost" onclick="newConversation()" title="Start a fresh session — follow-ups like &quot;only UAE&quot; stop referring to this conversation">New</button>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="card" id="contextCard">
+      <div class="section-title">🧭 Active Analytical Context</div>
+      <div id="contextBody" class="muted">No active query yet.</div>
+    </div>
+    <details class="card" open>
+      <summary class="section-title" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+        🕘 History
+        <span id="clearHistory" class="muted" style="cursor:pointer;font-weight:normal;text-decoration:underline">Clear</span>
+      </summary>
+      <div id="history" class="muted">No queries yet.</div>
+    </details>
+    <details class="card" open>
+      <summary class="section-title" style="cursor:pointer">🗂 Schema</summary>
+      <div id="schema" class="muted">Loading…</div>
+    </details>
+  </aside>
+</div>
+</div>
+
+<script>
+const TOKEN_KEY = 'text2sql_access_token';
+const SESSION_KEY = 'text2sql_session_id';
+
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+// The agent session_id (app/agent/session_store.py) is what lets the
+// backend carry resolved intent across turns ("show revenue" -> "only
+// UAE") and resume a paused clarification — see app/routes/query.py's
+// POST /v1/query. Persisted the same way as the auth token so a page
+// reload continues the same conversation instead of silently starting a
+// fresh one; getSessionId() returns null for a brand-new session, which
+// the server treats as "generate one" and echoes back in the response.
+function getSessionId() { return localStorage.getItem(SESSION_KEY); }
+function setSessionId(id) { localStorage.setItem(SESSION_KEY, id); }
+function clearSessionId() { localStorage.removeItem(SESSION_KEY); }
+
+function parseJwt(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+  } catch { return {}; }
+}
+
+// Wraps fetch() for authenticated API calls: attaches the bearer token and
+// drops back to the login screen on a 401 (expired/invalid token) instead of
+// letting every call site handle that case separately.
+async function authFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}), Authorization: `Bearer ${getToken()}` };
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) {
+    clearToken();
+    showLogin();
+    throw new Error('Session expired — please log in again.');
+  }
+  return r;
+}
+
+function showLogin() {
+  document.getElementById('loginScreen').hidden = false;
+  document.getElementById('app').hidden = true;
+}
+
+function showApp() {
+  document.getElementById('loginScreen').hidden = true;
+  document.getElementById('app').hidden = false;
+  const claims = parseJwt(getToken());
+  document.getElementById('userBadge').textContent =
+    `${claims.sub || ''} · ${claims.role || ''} (${claims.region || ''})`;
+}
+
+function logout() {
+  clearToken();
+  clearSessionId();
+  showLogin();
+  document.getElementById('output').innerHTML = '';
+  document.getElementById('question').value = '';
+  document.getElementById('history').innerHTML = '';
+}
+
+// Starts a fresh agent session without logging out — the next question is
+// treated as a brand-new conversation (no prior domain/metrics/filters
+// carried forward) instead of a follow-up to whatever was last asked.
+function newConversation() {
+  clearSessionId();
+  document.getElementById('output').innerHTML = '';
+  document.getElementById('question').placeholder = DEFAULT_PLACEHOLDER;
+}
+
+let booted = false;
+async function doLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('loginUser').value.trim();
+  const password = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    const r = await fetch('/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Login failed');
+    setToken(data.access_token);
+    document.getElementById('output').innerHTML = '';
+    document.getElementById('question').value = '';
+    showApp();
+    boot();
+    loadHistory();
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
+}
+
+document.getElementById('loginForm').addEventListener('submit', doLogin);
+
+const EXAMPLES = [
+  "Top 5 products by revenue in 2025",
+  "Monthly revenue trend for completed orders",
+  "Which country has the highest average order value?",
+  "Cancellation rate by sales channel",
+  "How many enterprise customers made a purchase last quarter of 2025?",
+  "DROP TABLE customers"  // guardrail demo
+];
+let lastRecord = null;
+
+function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// Builds and appends one card to a turn in isolation — a single bad/
+// unexpected field in one section (a malformed SQL string, a missing
+// breakdown key) must not take the rest of the turn down with it, since
+// `render()` builds several independent cards in sequence and a thrown
+// exception partway through would otherwise silently skip everything still
+// to come (pipeline trace is always last, so it was the most exposed).
+function appendSafely(turn, build, label) {
+  try {
+    const node = build();
+    if (node) turn.appendChild(node);
+  } catch (e) {
+    console.error(`Failed to render ${label}:`, e);
+    turn.appendChild(el(
+      `<div class="card"><span class="badge bad">render error</span>
+       <p class="muted" style="margin-top:8px">Couldn't render ${esc(label)} (${esc(e.message)}).</p></div>`
+    ));
+  }
+}
+
+function boot() {
+  if (booted) return;
+  booted = true;
+  const chips = document.getElementById('chips');
+  EXAMPLES.forEach(q => {
+    const c = el(`<span class="chip">${esc(q)}</span>`);
+    c.onclick = () => { document.getElementById('question').value = q; ask(); };
+    chips.appendChild(c);
+  });
+  loadSchema(); loadHistory(); rehydrateSession();
+}
+
+// On a page reload, getSessionId() (above) already lets the BACKEND
+// conversation survive — the agent still remembers everything — but until
+// this ran, the chat panel itself came back empty, which read as if the
+// conversation had been lost even though it hadn't. Fetches the persisted
+// transcript (GET /v1/agent/sessions/{id}/history — app/routes/sessions.py)
+// and replays each turn into #output before the user types anything,
+// using the same user/assistant bubble markup appendUserMessage() and
+// render()'s "conversational" branch already use elsewhere in this file.
+// Fails silently (leaves the panel empty, today's existing behavior) on a
+// brand-new session (404) or any network error.
+async function rehydrateSession() {
+  const sessionId = getSessionId();
+  if (!sessionId) return;
+  try {
+    const r = await authFetch(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/history`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const out = document.getElementById('output');
+    (data.history || []).forEach(turn => {
+      if (turn.role === 'user') {
+        out.appendChild(el(`<div class="user-msg"><div class="who"><span class="avatar avatar-user">👤</span>You</div>${esc(turn.content)}</div>`));
+      } else {
+        out.appendChild(el(`<div class="assistant-msg"><div class="who"><span class="avatar avatar-assistant">✨</span>Assistant</div>${esc(turn.content)}</div>`));
+      }
+    });
+    scrollThreadToBottom();
+  } catch {
+    // Network error — leave the panel empty, same as a brand-new session.
+  }
+}
+
+async function loadSchema() {
+  const r = await authFetch('/v1/schema').then(r => r.json());
+  const div = document.getElementById('schema');
+  div.innerHTML = '';
+  div.appendChild(el(`<div class="muted" style="margin-bottom:8px">data: ${esc(r.date_range[0])} → ${esc(r.date_range[1])}</div>`));
+  for (const [name, t] of Object.entries(r.tables)) {
+    const cols = t.columns.map(c => c.name).join(', ');
+    div.appendChild(el(`<details><summary><b>${esc(name)}</b> (${t.row_count})</summary><pre>${esc(cols)}</pre></details>`));
+  }
+}
+
+async function clearHistory() {
+  if (!confirm('Clear your query history? This only removes your own entries.')) return;
+  await authFetch('/v1/history/clear', { method: 'POST' });
+  loadHistory();
+}
+document.getElementById('clearHistory').addEventListener('click', (e) => {
+  // "Clear" now sits inside the History <summary> (see the collapsible
+  // conversion in the <aside> markup above) — without this, a click here
+  // would also toggle the parent <details> open/closed, since the click
+  // bubbles up to the native summary-toggle behavior.
+  e.preventDefault();
+  e.stopPropagation();
+  clearHistory();
+});
+
+async function loadHistory() {
+  const r = await authFetch('/v1/history').then(r => r.json());
+  const div = document.getElementById('history');
+  if (!r.queries.length) { div.textContent = 'No queries yet.'; return; }
+  div.innerHTML = '';
+  r.queries.forEach(q => {
+    const badge = q.status === 'ok' ? `conf ${(q.confidence*100).toFixed(0)}%` : q.status;
+    // Clarification/agent-step-cap records are keyed by "message" (the raw
+    // thing the user typed), not "question" (the resolved, synthesized
+    // question text) — see app/routes/query.py — so this needs both.
+    const label = q.question || q.message || '';
+    const item = el(`<div class="hist-item"><div class="hist-q">${esc(label)}</div>
+      <div class="hist-meta">${esc(badge)} · ${new Date(q.ts*1000).toLocaleTimeString()}</div></div>`);
+    item.onclick = () => render(q);
+    div.appendChild(item);
+  });
+}
+
+async function ask() {
+  const q = document.getElementById('question').value.trim();
+  if (!q) return;
+  document.getElementById('question').value = '';
+  appendUserMessage(q);
+  scrollThreadToBottom();
+  const statusEl = el(`<div class="status-line">⏳ Starting…</div>`);
+  document.getElementById('output').appendChild(statusEl);
+  scrollThreadToBottom();
+  setBusy(true);
+  try {
+    const r = await authFetch('/v1/query/stream', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: getSessionId(), message: q,
+      })
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.detail || r.statusText);
+    }
+    const data = await readProgressStream(r.body, statusEl);
+    if (data.session_id) setSessionId(data.session_id);
+    statusEl.remove();
+    render(data); loadHistory();
+    scrollThreadToBottom();
+  } catch (e) {
+    statusEl.remove();
+    document.getElementById('output').appendChild(el(
+      `<div class="card"><span class="badge bad">error</span><p class="muted" style="margin-top:8px">${esc(e.message)}</p></div>`
+    ));
+    scrollThreadToBottom();
+  } finally { setBusy(false); document.getElementById('question').focus(); }
+}
+
+// Reads POST /v1/query/stream's Server-Sent Events: a `data:` line per real
+// pipeline step as app/text2sql/pipeline.py and app/routes/query.py's own
+// post-pipeline steps actually reach them (see PROGRESS_LABELS there —
+// single source of truth for the label text), and one final
+// `event: done` line carrying the exact JSON body POST /v1/query would
+// have returned. This is real server-reported progress, not a timed guess.
+async function readProgressStream(body, statusEl) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      let eventName = 'message', dataLine = '';
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLine = line.slice(5).trim();
+      }
+      if (!dataLine) continue;
+      const parsed = JSON.parse(dataLine);
+      if (eventName === 'done') return parsed;
+      if (eventName === 'error') throw new Error(parsed.detail || 'Request failed');
+      // `detail` carries dynamic text for a step worth remembering (the
+      // reformulated standalone question, the draft SQL once generated) —
+      // distinct from `label`'s fixed per-step wording for an ordinary
+      // "still working" update. A detail-bearing step gets its OWN
+      // permanent line instead of overwriting the transient status line, so
+      // it stays visible through every later step instead of being erased
+      // by the next progress update — the thread ends up showing the trail
+      // of what the agent actually resolved, not just the last thing it's
+      // doing right now.
+      if (parsed.detail) {
+        // This step has already completed by the time a detail-bearing
+        // event fires (e.g. "generated" only fires once the draft SQL
+        // exists) — the hourglass belongs only on the transient status line
+        // below, which is genuinely still in progress.
+        const pinned = el(
+          `<div class="status-line">✓ ${esc(parsed.label)} <code>${esc(parsed.detail)}</code></div>`
+        );
+        statusEl.parentNode.insertBefore(pinned, statusEl);
+      } else {
+        statusEl.textContent = `⏳ ${parsed.label}`;
+      }
+      scrollThreadToBottom();
+    }
+  }
+  throw new Error('Connection closed before the result arrived');
+}
+
+// One bubble per user message, in the same running thread the system's
+// responses are appended to below (see render()) — the conversation
+// scrolls rather than replacing the previous turn, since a follow-up like
+// "only UAE" only makes sense read alongside what it's following up on.
+function appendUserMessage(text) {
+  document.getElementById('output').appendChild(el(
+    `<div class="user-msg"><div class="who"><span class="avatar avatar-user">👤</span>You</div>${esc(text)}</div>`
+  ));
+}
+
+// For the raw-SQL power-user path only (runRaw, below) — that path never
+// calls an LLM (guardrails + execute only, no agent graph involved), so
+// there's no real-progress stream for it; a short timed cycle is an honest
+// enough approximation for something that fast. Ordinary questions get
+// real server-reported progress instead — see ask()/readProgressStream().
+function appendStatusLine(steps) {
+  const node = el(`<div class="status-line"></div>`);
+  document.getElementById('output').appendChild(node);
+  node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  let i = 0;
+  node.textContent = `⏳ ${steps[0]}`;
+  node._timer = setInterval(() => {
+    i = (i + 1) % steps.length;
+    node.textContent = `⏳ ${steps[i]}`;
+  }, 1800);
+  return node;
+}
+
+function stopStatusLine(node) {
+  clearInterval(node._timer);
+  node.remove();
+}
+
+function setBusy(b) {
+  document.getElementById('askBtn').disabled = b;
+  document.getElementById('question').disabled = b;
+}
+
+// Keeps the thread pinned to its latest message as content streams in,
+// the same auto-scroll-to-bottom behavior a chat session has — but only
+// when the viewer is already at (or near) the bottom, so scrolling up to
+// re-read an earlier answer isn't yanked back down by the next event.
+function scrollThreadToBottom() {
+  const nearBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 160);
+  if (nearBottom) {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+// Per-turn context-diff block: what this turn's slot state carried forward
+// unchanged ("inherited") vs. what it actually resolved differently this
+// turn ("changed") — backed by app/routes/query.py's _context_diff_chips,
+// which diffs the real AgentState slot fields. Replaces the old
+// "Understood as" progress line, which just restated the reformulated
+// question text (often identical to the input) rather than showing what
+// actually changed.
+function renderContextDiff(rec) {
+  const chips = rec.context_diff || [];
+  if (!chips.length) return null;
+  const inherited = chips.filter(c => c.state === 'inherited');
+  const changed = chips.filter(c => c.state === 'changed');
+  if (!inherited.length && !changed.length) return null;
+  const chip = c => `<span class="ctx-chip ctx-chip-${esc(c.state)}">${esc(c.label)}</span>`;
+  return el(`<div class="card ctx-diff">
+    ${inherited.length ? `<div class="ctx-diff-row"><span class="muted">Inherited</span> ${inherited.map(chip).join('')}</div>` : ''}
+    ${changed.length ? `<div class="ctx-diff-row"><span class="muted">This turn</span> ${changed.map(chip).join('')}</div>` : ''}
+  </div>`);
+}
+
+// Sidebar "Active Analytical Context" card — the persistent, always-visible
+// counterpart to renderContextDiff() above: not what changed this turn, but
+// what the session currently stands on (domain/metrics/dimensions/filters/
+// time range), plus the caller's own security scope so it's obvious what
+// RLS/masking is already in effect for every query in this session.
+function renderActiveContext(rec) {
+  const body = document.getElementById('contextBody');
+  const ctx = rec.context;
+  if (!ctx) return;
+  const claims = parseJwt(getToken());
+  const rows = [];
+  if (ctx.domain) rows.push(['Domain', esc(ctx.domain)]);
+  if (ctx.metrics?.length) rows.push(['Metrics', ctx.metrics.map(esc).join(', ')]);
+  if (ctx.dimensions?.length) rows.push(['Dimensions', ctx.dimensions.map(esc).join(', ')]);
+  if (ctx.filters?.length) rows.push(['Filters', ctx.filters.map(f => `${esc(f.dimension)} ${esc(f.operator)} ${esc(f.value)}`).join(', ')]);
+  if (ctx.time_range?.description) rows.push(['Time range', esc(ctx.time_range.description)]);
+  rows.push(['Security', `${esc(claims.role || '')} (${esc(claims.region || '')})`]);
+  body.innerHTML = rows.map(([k, v]) => `<div class="ctx-row"><span class="muted">${k}</span><span>${v}</span></div>`).join('');
+}
+
+const DEFAULT_PLACEHOLDER = 'Ask anything about customers, products, orders, payments…';
+
+// One-line recap shown on a turn's collapsed summary — enough to tell turns
+// apart at a glance without expanding each one.
+function turnSummary(rec) {
+  if (rec.status === 'clarification') return '❓ Needs clarification';
+  if (rec.status === 'refused') return '🚫 Can\'t do that';
+  if (rec.status === 'blocked') return '⛔ Blocked by guardrails';
+  if (rec.status === 'error') return `⚠️ Error${rec.error ? ': ' + rec.error : ''}`;
+  if (rec.status === 'complexity_rejected') return '⚠️ Rejected — too complex/expensive';
+  const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}% confidence` : '';
+  const rows = rec.row_count != null ? `${rec.row_count} row(s)` : '';
+  return `✅ ${[rows, conf].filter(Boolean).join(' · ') || 'ok'}`;
+}
+
+function render(rec) {
+  lastRecord = rec;
+  const out = document.getElementById('output');
+  document.getElementById('question').placeholder = DEFAULT_PLACEHOLDER;
+
+  // rec.context is now present on every status (app/routes/query.py
+  // populates it on every return branch), so this always reflects the
+  // session's current slot state, not just the "ok" path.
+  renderActiveContext(rec);
+
+  if (rec.status === 'conversational') {
+    // A reply ABOUT the conversation itself ("explain that", "why did you
+    // pick X") — not a new data answer, so it's shown as a plain chat
+    // bubble, not another collapsible result card with a badge/SQL/debug
+    // trace. That distinction is the actual point: this is the one message
+    // type meant to read as ordinary conversation rather than a "result".
+    out.appendChild(el(`<div class="assistant-msg"><div class="who"><span class="avatar avatar-assistant">✨</span>Assistant</div>${esc(rec.reply)}</div>`));
+    out.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  // Fold up every earlier turn's result block as a new one lands — keeps a
+  // long conversation scannable; each one can still be reopened by click.
+  out.querySelectorAll('.turn-results[open]').forEach(d => { d.open = false; });
+
+  const turn = el(`<details class="turn turn-results" open><summary><span class="turn-who"><span class="avatar avatar-assistant">✨</span>T2SQL</span>${esc(turnSummary(rec))}</summary></details>`);
+
+  // Context-diff block (inherited vs. changed-this-turn slot state) — shown
+  // right under the summary for every status that carries a meaningful
+  // context_diff, not just 'ok', since a clarification turn can also have
+  // already resolved/changed slots before the ambiguity was hit.
+  const ctxDiff = renderContextDiff(rec);
+  if (ctxDiff) turn.appendChild(ctxDiff);
+
+  if (rec.status === 'clarification') {
+    const interps = rec.interpretations || [];
+    const askLine = interps.length >= 2
+      ? `Which did you mean — click an option below, or type its number ` +
+        `(1-${interps.length})? If it genuinely doesn't matter, just type ` +
+        `&quot;proceed anyway&quot; and I'll pick the most likely one.`
+      : interps.length === 1
+      ? `Here's my best read of what you meant — click it to go with it, type ` +
+        `&quot;proceed anyway&quot; to accept it, or reply with what you'd ` +
+        `rather do instead.`
+      : `Could you clarify, or type &quot;proceed anyway&quot; to let me pick ` +
+        `the most likely interpretation?`;
+    const card = el(`<div class="card"><span class="badge warn">needs clarification</span>
+      <p style="margin:10px 0" class="muted">${esc(rec.explanation)}</p>
+      <p style="margin:0 0 10px" class="clarify-ask">${askLine}</p><div id="interps"></div></div>`);
+    turn.appendChild(card);
+    const box = card.querySelector('#interps');
+    interps.forEach((i, idx) => {
+      const label = interps.length >= 2 ? `<strong>${idx + 1}.</strong> ` : '';
+      const d = el(`<div class="interp"><div>${label}${esc(i.description)}</div><code>${esc(i.example_sql)}</code></div>`);
+      // A clarifying reply is just the next message in the SAME session —
+      // app/routes/query.py resumes the paused turn via that session_id,
+      // same as if the user had typed the answer themselves.
+      d.onclick = () => { document.getElementById('question').value = i.description; ask(); };
+      box.appendChild(d);
+    });
+    out.appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // One chat bar for everything, including a clarifying reply — no
+    // separate input box per card. Just point the regular question bar at
+    // it so it's obvious where to type next.
+    const q = document.getElementById('question');
+    q.placeholder = 'Type your answer…';
+    q.focus();
+    return;
+  }
+
+  if (rec.status === 'refused') {
+    // Distinct from 'clarification': there is no choice to offer here (see
+    // app/agent/merge.py's MergedIntent.answerable) — just state plainly
+    // that this can't be done, with no interpretation list and no "proceed
+    // anyway" escape hatch implying a fallback exists. The question bar
+    // goes back to its normal placeholder (not "Type your answer…") since
+    // nothing is pending a reply.
+    turn.appendChild(el(`<div class="card"><span class="badge bad">can't do that</span>
+      <p style="margin-top:8px">${esc(rec.explanation)}</p></div>`));
+    out.appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  if (rec.status === 'blocked') {
+    turn.appendChild(el(`<div class="card"><span class="badge bad">blocked by guardrails</span>
+      <ul class="viol-list">${rec.violations.map(v => `<li>${esc(v)}</li>`).join('')}</ul>
+      <pre>${esc(rec.sql)}</pre></div>`));
+    out.appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  if (rec.status === 'error') {
+    turn.appendChild(el(`<div class="card"><span class="badge bad">execution error</span>
+      <p class="muted" style="margin-top:8px">${esc(rec.error)}</p>
+      ${rec.sql ? `<pre>${esc(rec.sql)}</pre>` : ''}</div>`));
+    out.appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  if (rec.status === 'complexity_rejected') {
+    turn.appendChild(el(`<div class="card"><span class="badge warn">rejected — too complex/expensive</span>
+      <p class="muted" style="margin-top:8px">${esc(rec.error)}</p><pre>${esc(rec.sql)}</pre></div>`));
+    out.appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  // ---- results (first — the actual answer, before any supporting detail) ----
+  appendSafely(turn, () => renderTable(rec), 'results table');
+
+  // ---- confidence card (collapsed by default — headline stays visible
+  //      on the <summary> even when collapsed) ----
+  appendSafely(turn, () => {
+    const conf = rec.confidence ?? 0;
+    const color = conf >= 0.75 ? 'var(--green)' : conf >= 0.6 ? 'var(--amber)' : 'var(--red)';
+    // model_confidence is diagnostic-only (weight 0, never part of the score)
+    // but still shown here for the "self-report vs computed" contrast.
+    const labels = { model_confidence: 'model self-report (diagnostic only)', alignment: 'back-translation',
+                     sanity: 'result sanity', schema_coverage: 'schema coverage',
+                     ambiguity: 'ambiguity' };
+    let bars = '';
+    for (const [k, v] of Object.entries(rec.confidence_breakdown || {})) {
+      const val = v.included ? v.value : null;
+      bars += `<div class="conf-bar"><span>${labels[k] || k}</span>
+        <div class="track"><div class="fill" style="width:${val === null ? 0 : val*100}%;
+          background:${val === null ? 'transparent' : 'var(--accent)'}"></div></div>
+        <span>${val === null ? 'skip' : (val*100).toFixed(0) + '%'}</span></div>`;
+    }
+    return el(`<details class="card">
+      <summary>Confidence — ${(conf*100).toFixed(0)}%</summary>
+      <span class="badge ${conf >= 0.75 ? 'ok' : conf >= 0.6 ? 'warn' : 'bad'}">
+        ${rec.low_confidence ? 'low confidence — verify before trusting' : 'confidence'}</span>
+      <div class="conf-wrap"><div class="conf-num" style="color:${color}">${(conf*100).toFixed(0)}%</div>
+      <div class="conf-bars">${bars}</div></div>
+      </details>`);
+  }, 'confidence breakdown');
+
+  // ---- SQL card (editable, collapsed by default) ----
+  appendSafely(turn, () => {
+    const sqlCard = el(`<details class="card"><summary>Generated SQL</summary>
+      <textarea id="sqlbox">${esc(rec.sql)}</textarea>
+      <div class="fb"><button class="ghost" onclick="runRaw(document.getElementById('sqlbox').value)">Run edited SQL</button></div>
+      <p class="muted" style="margin-top:10px">${esc(rec.explanation || '')}</p>
+      ${(rec.guardrail_notes || []).map(n => `<p class="muted">🛡 ${esc(n)}</p>`).join('')}
+      ${rec.back_translated_question ? `<details><summary>Hallucination check: SQL back-translated</summary>
+        <pre>"${esc(rec.back_translated_question)}"\n\n${esc(rec.alignment_reasoning || '')}</pre></details>` : ''}
+      ${rec.explain_plan ? `<details><summary>EXPLAIN plan</summary><pre>${esc(rec.explain_plan)}</pre></details>` : ''}
+      </details>`);
+    return sqlCard;
+  }, 'generated SQL');
+
+  // ---- warnings ----
+  appendSafely(turn, () => {
+    const warns = [...(rec.sanity_warnings || []), ...(rec.coverage_problems || [])];
+    if (!warns.length) return null;
+    return el(`<div class="card"><div class="section-title">Warnings</div>
+      <ul class="warn-list">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>`);
+  }, 'warnings');
+
+  // ---- feedback ----
+  appendSafely(turn, () => {
+    if (!rec.query_id) return null;
+    const fb = el(`<div class="card"><div class="section-title">Was this correct?</div>
+      <div class="fb"><button class="ghost" id="fbUp">👍 Correct</button>
+      <button class="ghost" id="fbDown">👎 Wrong</button><span class="muted" id="fbMsg"></span></div></div>`);
+    fb.querySelector('#fbUp').onclick = () => sendFeedback(rec.query_id, true, fb);
+    fb.querySelector('#fbDown').onclick = () => sendFeedback(rec.query_id, false, fb);
+    return fb;
+  }, 'feedback controls');
+
+  out.appendChild(turn);
+  turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderTable(rec) {
+  if (!rec.columns || !rec.columns.length) return el(`<div class="card muted">No result columns.</div>`);
+  const head = rec.columns.map((c, i) => `<th onclick="sortTable(${i})">${esc(c)} ⇅</th>`).join('');
+  const body = rec.rows.map(r => `<tr>${r.map(v => `<td>${esc(fmt(v))}</td>`).join('')}</tr>`).join('');
+  return el(`<div class="card"><div class="section-title">Results — ${rec.row_count} row(s) · ${rec.elapsed_ms} ms</div>
+    <div class="table-scroll"><table id="resultTable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>`);
+}
+
+function fmt(v) {
+  if (typeof v === 'number' && !Number.isInteger(v)) return v.toFixed(2);
+  return v;
+}
+
+let sortState = {};
+function sortTable(i) {
+  const tbody = document.querySelector('#resultTable tbody');
+  const rows = [...tbody.rows];
+  const dir = sortState[i] = -(sortState[i] || -1);
+  rows.sort((a, b) => {
+    const x = a.cells[i].textContent, y = b.cells[i].textContent;
+    const nx = parseFloat(x), ny = parseFloat(y);
+    if (!isNaN(nx) && !isNaN(ny)) return (nx - ny) * dir;
+    return x.localeCompare(y) * dir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+async function runRaw(sql) {
+  // Raw SQL skips every LLM step (no merge, no generation) - just
+  // guardrails + execution, so the full agent-pipeline step list above
+  // would be actively wrong here, not just imprecise.
+  const statusEl = appendStatusLine(['Checking guardrails & cost limits…', 'Running the query…']);
+  setBusy(true);
+  try {
+    const r = await authFetch('/v1/execute', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sql})
+    });
+    const data = await r.json();
+    stopStatusLine(statusEl);
+    if (data.status === 'blocked') { render({...data, question: '(raw SQL)'}); return; }
+    if (data.status === 'error') { render({...data, question: '(raw SQL)'}); return; }
+    document.querySelectorAll('.turn-results[open]').forEach(d => { d.open = false; });
+    const turn = el(`<details class="turn turn-results" open>
+      <summary>✅ raw SQL · ${data.row_count} row(s)</summary>
+      <div class="card"><span class="badge ok">raw SQL executed</span>
+      ${(data.guardrail_notes || []).map(n => `<p class="muted">🛡 ${esc(n)}</p>`).join('')}
+      <pre>${esc(data.sql)}</pre></div></details>`);
+    turn.appendChild(renderTable(data));
+    document.getElementById('output').appendChild(turn);
+    turn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } finally { setBusy(false); }
+}
+
+async function sendFeedback(id, correct, card) {
+  await authFetch('/v1/feedback', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({query_id: id, correct})
+  });
+  card.querySelector('#fbMsg').textContent = correct
+    ? 'Saved — this becomes a few-shot example for future queries.'
+    : 'Saved — logged as an eval candidate.';
+}
+
+if (getToken()) { showApp(); boot(); } else { showLogin(); }
+</script>
+</body>
+</html>
